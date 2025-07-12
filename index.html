@@ -1,0 +1,88 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visor de Vistas GeoJSON</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { font-family: Arial, sans-serif; padding: 15px; max-width: 1000px; margin: auto; }
+    #map { height: 500px; margin-top: 10px; }
+    select, button { width: 100%; margin-top: 10px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h2>🗺️ Visor de Vistas PostGIS (GeoJSON)</h2>
+  <label for="vistaSelect">Selecciona una vista:</label>
+  <select id="vistaSelect">
+    <option value="">-- Selecciona una vista GeoJSON --</option>
+  </select>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+    const supabase = createClient(
+      'https://ifofalnxospnvasapqcp.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlmb2ZhbG54b3NwbnZhc2FwcWNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIzMzA2MTMsImV4cCI6MjA2NzkwNjYxM30.ju3sOjdhAtW2ug2XcYwAhj2jz4bCrzYS6QoAfCJNaa8'
+    );
+
+    const map = L.map('map').setView([-1.5, -78.5], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    let currentLayer;
+
+    // Lista manual de vistas con geometría
+    const vistas = [
+      "vista_sote1_geojson",
+      "vista_gasoducto_geojson",
+      "vista_ocp_geojson"
+    ];
+
+    function cargarOpciones() {
+      const select = document.getElementById('vistaSelect');
+      vistas.forEach(vista => {
+        const option = document.createElement('option');
+        option.value = vista;
+        option.textContent = vista;
+        select.appendChild(option);
+      });
+    }
+
+    async function cargarVista(vista) {
+      const { data, error } = await supabase.from(vista).select('*');
+      if (error) {
+        alert('Error al cargar vista: ' + error.message);
+        return;
+      }
+
+      if (currentLayer) map.removeLayer(currentLayer);
+
+      const features = data.map(item => ({
+        type: "Feature",
+        geometry: item.geojson,
+        properties: Object.fromEntries(Object.entries(item).filter(([k]) => k !== 'geojson'))
+      }));
+
+      currentLayer = L.geoJSON({ type: "FeatureCollection", features }, {
+        onEachFeature: function (feature, layer) {
+          const popup = Object.entries(feature.properties)
+            .map(([key, val]) => `<strong>${key}</strong>: ${val}`)
+            .join("<br>");
+          layer.bindPopup(popup);
+        }
+      }).addTo(map);
+
+      map.fitBounds(currentLayer.getBounds());
+    }
+
+    document.getElementById('vistaSelect').addEventListener('change', function () {
+      const vista = this.value;
+      if (vista) cargarVista(vista);
+    });
+
+    cargarOpciones();
+  </script>
+</body>
+</html>
