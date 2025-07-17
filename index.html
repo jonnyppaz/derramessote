@@ -1,0 +1,390 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Derrames de petróleo en Sucumbíos</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { margin: 0; display: flex; height: 100vh; font-family: Arial, sans-serif; }
+    .sidebar {
+      font-size: 11px;
+      width: 350px; padding: 20px; background: #e6f4ea; overflow-y: auto;
+      box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+    }
+    #map { flex: 1; }
+    h1 { font-size: 20px; margin-bottom: 10px; }
+    h2 { font-size: 16px; margin-top: 20px; }
+    input, textarea, select, button {
+      width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 5px;
+    }
+    button { background: #2c3e50; color: white; font-weight: bold; cursor: pointer; }
+    .layer-controls label, .legend div { margin: 5px 0; display: block; font-size: 10px; }
+    .color-box {
+      width: 14px; height: 14px; display: inline-block; margin-right: 8px; vertical-align: middle;
+    }
+    .legend { margin-top: 10px; padding: 10px; background: white; border: 1px solid #ccc; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h1>🌍 Derrames de petróleo en Sucumbíos</h1>
+
+    <h2>📋 Reporte de Evento</h2>
+    <form id="eventoForm">
+      <input type="text" id="nombre" placeholder="Nombre del evento" required />
+      <textarea id="descripcion" placeholder="Descripción del evento" required></textarea>
+      <select id="tipo" required>
+        <option value="">Seleccione tipo de evento</option>
+        <option value="Afectación a cuerpo hídrico">Afectación a cuerpo hídrico</option>
+        <option value="Afectación al suelo">Afectación al suelo</option>
+        <option value="Afectación vial">Afectación vial</option>
+        <option value="Afectación a áreas protegidas">Afectación a áreas protegidas</option>
+        <option value="Otro">Otro</option>
+      </select>
+      <textarea id="danos" placeholder="Daños ocasionados" required></textarea>
+      <input type="date" id="fecha" required />
+      <input type="text" id="utm_x" placeholder="UTM Este (X)" />
+      <input type="text" id="utm_y" placeholder="UTM Norte (Y)" />
+      <input type="hidden" id="latitud" />
+      <input type="hidden" id="longitud" />
+      <button type="submit">Enviar Reporte</button>
+    </form>
+
+    <h2>📊 Estadísticas</h2>
+    <div id="estadisticas"></div>
+
+    <h2>🗺️ Capas</h2>
+    <div id="layerControls" class="layer-controls"></div>
+
+    <label><input type="checkbox" id="mostrarEventosToggle"> Mostrar/Ocultar reportes en mapa</label>
+    <label><input type="checkbox" id="mostrarEventos"> Activar capa de eventos</label>
+    
+<div style="margin-top: 10px;">
+  <label for="fechaDesde">Desde:</label>
+  <input type="date" id="fechaDesde" />
+  <label for="fechaHasta">Hasta:</label>
+  <input type="date" id="fechaHasta" />
+</div>
+
+    <select id="filtroTipo">
+      <option value="">-- Filtrar por tipo --</option>
+      <option value="Afectación a cuerpo hídrico">Afectación a cuerpo hídrico</option>
+      <option value="Afectación al suelo">Afectación al suelo</option>
+      <option value="Afectación vial">Afectación vial</option>
+      <option value="Afectación a áreas protegidas">Afectación a áreas protegidas</option>
+      <option value="Otro">Otro</option>
+    </select>
+    <button onclick="cargarReportes()">📍 Mostrar Reportes</button>
+    <button onclick="descargarExcel()">⬇️ Descargar Reportes (Excel)</button>
+
+    <h2>🧾 Leyenda</h2>
+    <div class="legend" id="legend">
+      <strong>🗂️ Leyenda de Capas</strong>
+<div><img src="icono_torre_petrolera_final.png" width="18" style="vertical-align:middle;"> Estaciones de Bombeo</div>
+<div><img src="icono_barril_final.png" width="18" style="vertical-align:middle;"> Estaciones de Oleoducto</div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js">
+
+
+function descargarExcel() {
+  const tipoSeleccionado = document.getElementById("filtroTipo").value;
+  const fechaDesde = document.getElementById("fechaDesde").value;
+  const fechaHasta = document.getElementById("fechaHasta").value;
+
+  supabase.from('eventos').select('*').then(({ data, error }) => {
+    if (error) {
+      alert("Error al obtener los datos.");
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert("No hay reportes disponibles.");
+      return;
+    }
+
+    const filtrados = data.filter(ev => {
+      const cumpleTipo = !tipoSeleccionado || ev.tipo === tipoSeleccionado;
+      const cumpleFecha = (!fechaDesde || ev.fecha >= fechaDesde) &&
+                          (!fechaHasta || ev.fecha <= fechaHasta);
+      return cumpleTipo && cumpleFecha;
+    });
+
+    if (filtrados.length === 0) {
+      alert("No hay reportes que cumplan con los filtros.");
+      return;
+    }
+
+    const encabezados = Object.keys(filtrados[0]);
+    const csvRows = [encabezados.join(",")];
+    for (const row of filtrados) {
+      const values = encabezados.map(k => {
+        let val = (row[k] ?? "").toString().replace(/"/g, '""');
+        return `"${val}"`;
+      });
+      csvRows.push(values.join(","));
+    }
+
+    const csvData = csvRows.join("\n");
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "reportes_filtrados.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+}
+window.descargarExcel = descargarExcel;
+
+</script>
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+    const supabase = createClient(
+      'https://ifofalnxospnvasapqcp.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlmb2ZhbG54b3NwbnZhc2FwcWNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIzMzA2MTMsImV4cCI6MjA2NzkwNjYxM30.ju3sOjdhAtW2ug2XcYwAhj2jz4bCrzYS6QoAfCJNaa8'
+    );
+
+    const map = L.map('map').setView([-1.63, -78.6], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    const capas = {
+      "vista_SOTE1_geojson": { color: "blue", nombre: "SOTE" },
+      "vista_gasoducto1_geojson": { color: "green", nombre: "GASODUCTO" },
+      "vista_plataformas1_geojson": { color: "orange", nombre: "PLATAFORMAS" },
+      "vista_estacionesbombeo1_geojson": { color: "purple", nombre: "ESTACIONES DE BOMBEO" },
+      "vista_estacionesoleoducto1_geojson": { color: "brown", nombre: "ESTACIONES DE OLEODUCTO" },
+      "vista_Poblados_geojson": { color: "teal", nombre: "POBLADOS" },
+      "vista_Red_Vial_geojson": { color: "gray", nombre: "RED VIAL" },
+      "vista_Riosdobles_geojson": { color: "skyblue", nombre: "RÍOS DOBLES" },
+"Limite_provincial_Sucumbios": { color: "black", nombre: "LÍMITE PROV. SUCUMBÍOS" },
+
+
+    };
+
+    const layersActivas = {};
+    let marker, reportesLayer;
+
+    function cargarControles() {
+      const contenedor = document.getElementById('layerControls');
+      const leyenda = document.getElementById('legend');
+      Object.entries(capas).forEach(([nombre, config]) => {
+        const label = document.createElement('label');
+        label.innerHTML = `<input type="checkbox" value="${nombre}"> ${config.nombre}`;
+        contenedor.appendChild(label);
+        leyenda.innerHTML += `<div><span class="color-box" style="background:${config.color}"></span>${config.nombre}</div>`;
+      });
+    }
+
+    async function toggleCapa(nombre, activar) {
+      if (activar && !layersActivas[nombre]) {
+        const { data } = await supabase.from(nombre).select('*');
+        const features = data.map(item => ({
+          type: "Feature",
+          geometry: item.geom,
+          properties: Object.fromEntries(Object.entries(item).filter(([k]) => k !== 'geojson'))
+        }));
+        const layer = L.geoJSON({ type: "FeatureCollection", features }, {
+          pointToLayer: (feature, latlng) => {
+            if (nombre === "Limite_provincial_Sucumbios") return undefined;
+            if (nombre === "vista_estacionesbombeo1_geojson") {
+              return L.marker(latlng, {
+                icon: L.icon({
+                  iconUrl: "icono_torre_petrolera_final.png",
+                  iconSize: [22, 22],
+                  iconAnchor: [11, 11]
+                })
+              });
+            }
+            if (nombre === "vista_estacionesoleoducto1_geojson") {
+              return L.marker(latlng, {
+                icon: L.icon({
+                  iconUrl: "icono_barril_final.png",
+                  iconSize: [22, 22],
+                  iconAnchor: [11, 11]
+                })
+              });
+            }
+            if (nombre === "vista_Poblados_geojson") {
+              return L.marker(latlng, {
+                icon: L.icon({
+                  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
+                  iconSize: [14, 14],
+                  iconAnchor: [7, 7]
+                })
+              });
+            }
+            return undefined;
+          },
+
+          
+
+          
+          style: (feature) => {
+            if (nombre === "Limite_provincial_Sucumbios") {
+              return { color: capas[nombre].color, weight: 2, fillOpacity: 0 };
+            }
+            return { color: capas[nombre].color };
+          },
+          onEachFeature: (f, l) => {
+            const popup = Object.entries(f.properties).map(([k, v]) => `<strong>${k}</strong>: ${v}`).join("<br>");
+            l.bindPopup(popup);
+          }
+        }).addTo(map);
+        layersActivas[nombre] = layer;
+      } else if (!activar && layersActivas[nombre]) {
+        map.removeLayer(layersActivas[nombre]);
+        delete layersActivas[nombre];
+      }
+    }
+
+    document.getElementById('layerControls').addEventListener('change', (e) => {
+      if (e.target.type === 'checkbox') {
+        toggleCapa(e.target.value, e.target.checked);
+      }
+    });
+
+    async function cargarReportes() {
+      if (!document.getElementById('mostrarEventos').checked) return;
+      const { data } = await supabase.from('eventos').select('*');
+      if (reportesLayer) map.removeLayer(reportesLayer);
+      const tipoSeleccionado = document.getElementById("filtroTipo").value;
+      const markers = data.filter(ev => (!tipoSeleccionado || ev.tipo === tipoSeleccionado) && ev.latitud && ev.longitud)
+        .map(ev => L.marker([ev.latitud, ev.longitud], {
+          icon: L.icon({
+            iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+            iconSize: [32, 32],
+            iconAnchor: [16, 32]
+          })
+        }).bindPopup(`<strong>${ev.nombre}</strong><br>${ev.tipo}<br>${ev.descripcion}<br><em>${ev.fecha}</em>`));
+      reportesLayer = L.layerGroup(markers).addTo(map);
+    }
+
+    async function cargarEstadisticas() {
+      const { data } = await supabase.from('eventos').select('tipo');
+      const conteo = {};
+      data.forEach(ev => {
+        if (ev.tipo) conteo[ev.tipo] = (conteo[ev.tipo] || 0) + 1;
+      });
+      document.getElementById("estadisticas").innerHTML = Object.entries(conteo)
+        .map(([t, c]) => `<div><strong>${t}</strong>: ${c}</div>`).join('');
+    }
+
+    document.getElementById("mostrarEventos").addEventListener("change", cargarReportes);
+    document.getElementById("filtroTipo").addEventListener("change", cargarReportes);
+
+    navigator.geolocation.getCurrentPosition(pos => {
+      const { latitude, longitude } = pos.coords;
+      map.setView([latitude, longitude], 13);
+      marker = L.marker([latitude, longitude], { draggable: true }).addTo(map);
+      document.getElementById('latitud').value = latitude;
+      document.getElementById('longitud').value = longitude;
+      marker.on('dragend', function () {
+        const { lat, lng } = marker.getLatLng();
+        document.getElementById('latitud').value = lat;
+        document.getElementById('longitud').value = lng;
+      });
+    });
+
+    map.on('click', function (e) {
+      const { lat, lng } = e.latlng;
+      if (!marker) marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      else marker.setLatLng([lat, lng]);
+      document.getElementById('latitud').value = lat;
+      document.getElementById('longitud').value = lng;
+    });
+
+    document.getElementById('eventoForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nombre = document.getElementById('nombre').value;
+      const descripcion = document.getElementById('descripcion').value;
+      const tipo = document.getElementById('tipo').value;
+      const danos = document.getElementById('danos').value;
+      const fecha = document.getElementById('fecha').value;
+      const latitud = parseFloat(document.getElementById('latitud').value);
+      const longitud = parseFloat(document.getElementById('longitud').value);
+      const utm_x = document.getElementById('utm_x').value;
+      const utm_y = document.getElementById('utm_y').value;
+      await supabase.from('eventos').insert([{ nombre, descripcion, tipo, danos, fecha, latitud, longitud, utm_x, utm_y }]);
+      alert("¡Evento registrado!");
+      document.getElementById('eventoForm').reset();
+    });
+
+    cargarControles();
+    cargarEstadisticas();
+document.getElementById("mostrarEventosToggle").addEventListener("change", (e) => {
+  if (reportesLayer) {
+    if (e.target.checked) {
+      map.addLayer(reportesLayer);
+    } else {
+      map.removeLayer(reportesLayer);
+    }
+  }
+});
+
+  
+
+
+function descargarExcel() {
+  const tipoSeleccionado = document.getElementById("filtroTipo").value;
+  const fechaDesde = document.getElementById("fechaDesde").value;
+  const fechaHasta = document.getElementById("fechaHasta").value;
+
+  supabase.from('eventos').select('*').then(({ data, error }) => {
+    if (error) {
+      alert("Error al obtener los datos.");
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert("No hay reportes disponibles.");
+      return;
+    }
+
+    const filtrados = data.filter(ev => {
+      const cumpleTipo = !tipoSeleccionado || ev.tipo === tipoSeleccionado;
+      const cumpleFecha = (!fechaDesde || ev.fecha >= fechaDesde) &&
+                          (!fechaHasta || ev.fecha <= fechaHasta);
+      return cumpleTipo && cumpleFecha;
+    });
+
+    if (filtrados.length === 0) {
+      alert("No hay reportes que cumplan con los filtros.");
+      return;
+    }
+
+    const encabezados = Object.keys(filtrados[0]);
+    const csvRows = [encabezados.join(",")];
+    for (const row of filtrados) {
+      const values = encabezados.map(k => {
+        let val = (row[k] ?? "").toString().replace(/"/g, '""');
+        return `"${val}"`;
+      });
+      csvRows.push(values.join(","));
+    }
+
+    const csvData = csvRows.join("\n");
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "reportes_filtrados.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+}
+window.descargarExcel = descargarExcel;
+
+</script>
+</body>
+</html>
